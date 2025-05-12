@@ -1,20 +1,11 @@
 import json
-import hashlib
+
+from bloom_filter2 import BloomFilter
 
 
-def create_predicate_index(predicates):
-    def normalize_section(section):
-        return sorted(
-            [json.dumps(predicate, sort_keys=True) for predicate in section],
-            key=lambda x: x
-        )
-
-    normalized = {
-        "where": normalize_section(predicates["where"]),
-        "joins": normalize_section(predicates["joins"]),
-        "having": normalize_section(predicates["having"])
-    }
-
-    serialized = json.dumps(normalized, sort_keys=True).encode("utf-8")
-
-    return hashlib.sha1(serialized).hexdigest()
+def create_predicate_bloom(predicates):
+    bloom = BloomFilter(max_elements=100, error_rate=0.001)
+    for section in ("where", "joins", "having"):
+        for pred in predicates[section]:
+            bloom.add(json.dumps(pred, sort_keys=True))
+    return bloom
