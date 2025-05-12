@@ -4,18 +4,13 @@ from sqlglot import parse_one, exp
 
 def parse_predicates(sql):
     """
-    Enhanced parser that handles JOIN conditions properly.
-    Returns predicates in structured format:
-    {
-        "where": [list of where predicates],
-        "joins": [list of join predicates],
-        "having": [list of having predicates]
-    }
+    Recursively parses predicates from top-level and subqueries.
     """
 
     def parse_expression(expression):
         if isinstance(expression, exp.Column):
-            return expression.sql(dialect='postgres')
+            # Strip table/alias prefix, keep only column name
+            return expression.name  # avoids alias or table prefix
 
         if isinstance(expression, exp.EQ):
             return {
@@ -60,7 +55,6 @@ def parse_predicates(sql):
         elif isinstance(expression, exp.Paren):
             return parse_expression(expression.this)
         else:
-            # Fallback for unsupported expressions
             try:
                 return {
                     "type": "raw",
@@ -86,6 +80,22 @@ def parse_predicates(sql):
                 predicates.append(parsed)
         return predicates
 
+    def collect_from_select(select_expr, result):
+        # WHERE
+        where_clause = select_expr.args.get("where")
+        if where_clause:
+            result["where"].extend(flatten_conditions(where_clause.this))
+
+        # JOIN
+        for join in select_expr.find_all(exp.Join):
+            if join.args.get("on"):
+                result["joins"].extend(flatten_conditions(join.args["on"]))
+
+        # HAVING
+        having_clause = select_expr.args.get("having")
+        if having_clause:
+            result["having"].extend(flatten_conditions(having_clause.this))
+
     result = {
         "where": [],
         "joins": [],
@@ -98,19 +108,8 @@ def parse_predicates(sql):
         print(f"Parse error: {e}")
         return result
 
-    # Extract WHERE clause
-    where_clause = parsed.find(exp.Where)
-    if where_clause:
-        result["where"] = flatten_conditions(where_clause.this)
-
-    # Extract JOIN ON clauses
-    for join in parsed.find_all(exp.Join):
-        if join.args.get("on"):
-            result["joins"].extend(flatten_conditions(join.args["on"]))
-
-    # Extract HAVING clause
-    having_clause = parsed.find(exp.Having)
-    if having_clause:
-        result["having"] = flatten_conditions(having_clause.this)
+    # Traverse all SELECT expressions, including subqueries
+    for select_expr in parsed.find_all(exp.Select):
+        collect_from_select(select_expr, result)
 
     return result
